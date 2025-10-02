@@ -24,4 +24,4 @@ def parse_page_range_string(page_range_string: str | None):
         else:
             raise ValueError("Invalid page range: start page must be less than or equal to end page.")
     else:
-        []
+        return []

@@ -193,3 +193,4 @@ backend/data/app.db
 /backend/data
 *.db
 *secrets.toml*
+src/data/

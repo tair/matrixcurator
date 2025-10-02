@@ -1,49 +1,23 @@
-# Stage 1: The Builder
-# This stage installs PDM and creates a requirements.txt file from your pdm.lock.
-# This keeps the final image clean and free of build-time tools like PDM.
-FROM python:3.12-slim AS builder
+# syntax=docker/dockerfile:1
+FROM python:3.12
 
-# Install PDM
-RUN pip install pdm
-
-# Set the working directory
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
-# Copy only the files needed to install dependencies
-COPY pyproject.toml pdm.lock ./
-
-# Generate a requirements.txt file from the lock file for production dependencies
-# The -f flag specifies the FORMAT, and the -o flag specifies the OUTPUT file.
-RUN pdm export -f requirements -o requirements.txt --prod --without-hashes
-
-# Stage 2: The Final Image
-# This stage builds the lean, final image for production.
-
-FROM python:3.12-slim
-
-# Set environment variables for best practices in Python containers
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Install system dependencies required for LibreOffice
+# ---- system tools ----
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    libreoffice \
-    && rm -rf /var/lib/apt/lists/*
+    build-essential gcc libffi-dev libssl-dev libreoffice ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Set the working directory
-WORKDIR /app
-
-# Copy the requirements.txt from the builder stage
-COPY --from=builder /app/requirements.txt .
-
-# Install the production dependencies
+# ---- Python deps ----
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code and other necessary files into the container
-COPY src/ ./src
+# ---- FastAPI code ----
+COPY app.py test_routes.py ./
+COPY src ./src
 
-ENV STREAMLIT_SERVER_PORT=80
-
-# Define the command to run your application (e.g., using uvicorn or gunicorn)
-CMD ["streamlit", "run", "src/streamlit_app.py"]
+# ---- expose & run API ----
+EXPOSE 8001
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"]

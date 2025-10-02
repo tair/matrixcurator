@@ -5,11 +5,10 @@
 
 An AI-powered tool to automate the extraction of morphological character data from scientific publications and generate standardized, FAIR-compliant NEXUS files for phylogenetic analysis.
 
-| Deployment      | Link                                                                                                             | Purpose                     |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| **Primary App** | [![Tailscale Funnel](https://img.shields.io/badge/Tailscale-Funnel-blue.svg?logo=tailscale)](https://matrixcurator.tortoise-butterfly.ts.net/) | Main application link. |
-| **Mirror**      | [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://matrixcurator.streamlit.app/) | Backup link for redundancy. |
-
+| Deployment      | Link                                                                                                                                           | Purpose                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **Primary App** | [![Tailscale Funnel](https://img.shields.io/badge/Tailscale-Funnel-blue.svg?logo=tailscale)](https://matrixcurator.tortoise-butterfly.ts.net/) | Main application link.      |
+| **Mirror**      | [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://matrixcurator.streamlit.app/)                   | Backup link for redundancy. |
 
 ---
 
@@ -39,6 +38,7 @@ The curation of biological and paleontological datasets, particularly morphologi
 **MatrixCurator** addresses this challenge by leveraging Large Language Models (LLMs) to automate the entire curation workflow. Developed for the [MorphoBank](https://morphobank.org) repository, this tool transforms unstructured character descriptions from research papers into structured, machine-readable `CHARSTATELABELS` blocks within a NEXUS file.
 
 This project aims to:
+
 - **Accelerate research** by drastically reducing manual data entry time.
 - **Improve data quality** by minimizing transcription errors and standardizing formats.
 - **Enhance data reusability** by producing complete, FAIR-compliant NEXUS files.
@@ -65,6 +65,7 @@ The MatrixCurator pipeline is a multi-step process designed for accuracy and eff
 2.  **Document Parsing**: The selected pages of the article are isolated and parsed into a machine-readable format (Markdown or raw text) using the chosen parsing engine.
 
 3.  **AI Core - Multi-Agent Extraction & Evaluation**:
+
     - **Retriever Agent**: For each character number, this agent is prompted to read the parsed document and extract the character's name and its list of states as JSON object.
     - **Evaluator Agent**: The extracted data is passed to this agent, which compares it against the source text to assign an accuracy score (1-10).
     - **Self-Correction Loop**: If the score is below a threshold (e.g., 8), the process is retried with a corrective prompt. This ensures high-fidelity extraction.
@@ -131,6 +132,7 @@ MatrixCurator requires API keys to interact with external LLM and parsing servic
     # Optional: For error tracking with Sentry.
     SENTRY_DSN=""
     ```
+
 3.  **Set Up Prompts in Langfuse:**
 
 The application dynamically fetches prompts from your Langfuse project. You must create three specific prompts in the Langfuse UI.
@@ -138,8 +140,6 @@ The application dynamically fetches prompts from your Langfuse project. You must
 Log into your Langfuse project, navigate to the **Prompts** section, and create the following three prompts.
 
 > **Important:** The application fetches prompts by their unique name. You must use the exact names specified below (`system_prompt`, `extraction_prompt`, and `evaluation_prompt`).
-
-
 
 **A. Prompt Name: `system_prompt`**
 
@@ -178,6 +178,7 @@ streamlit run src/streamlit_app.py
 ```
 
 Navigate to `http://localhost:8501` in your web browser. From there, you can:
+
 1.  Upload your research article (`.pdf`, `.docx`).
 2.  Select the document parsing method.
 3.  Enter the total number of characters and the page range where they are described.
@@ -192,6 +193,7 @@ You can run MatrixCurator using a pre-built image or by building it from source.
 > **Note:** Both `docker run` commands require you to mount your secrets file from `.streamlit/secrets.toml`.
 
 #### Using the Pre-built Image
+
 1.  **Pull the image:**
     ```bash
     docker pull ghcr.io/morphobankorg/matrixcurator:latest
@@ -202,6 +204,7 @@ You can run MatrixCurator using a pre-built image or by building it from source.
     ```
 
 #### Building from Source
+
 1.  **Build the image:**
     ```bash
     docker build -t matrixcurator .
@@ -211,8 +214,32 @@ You can run MatrixCurator using a pre-built image or by building it from source.
     docker run -p 8501:80 -v "$(pwd)/.streamlit/secrets.toml:/app/.streamlit/secrets.toml" matrixcurator
     ```
 
-Once started, the application is available at **`http://localhost:8501`**.
+#### Using Docker Compose (for Development)
 
+For local development with hot-reload:
+
+1.  **Create environment file:**
+
+    ```bash
+    cp development.env.template .env
+    ```
+
+    Edit `.env` and add your `GEMINI_API_KEY`.
+
+2.  **Start the service:**
+
+    ```bash
+    docker-compose up
+    ```
+
+3.  **Access the API:**
+    - API: `http://localhost:8001`
+    - API Documentation: `http://localhost:8001/docs`
+    - Health Check: `http://localhost:8001/health`
+
+The Docker Compose setup includes volume mounting for hot-reload during development. Any changes to `app.py`, `test_routes.py`, or files in the `src/` directory will automatically trigger a reload.
+
+Once started, the application is available at **`http://localhost:8501`** (Streamlit) or **`http://localhost:8001`** (FastAPI).
 
 ## Project Structure
 
@@ -243,9 +270,10 @@ morphobankorg-matrixcurator/
 
 If you use MatrixCurator or its underlying methodology in your research, please cite the following paper:
 
-Jariwala, S., Long-Fox, B. L., & Berardini, T. Z. (2025). *Advancing FAIR Data Management through AI-Assisted Curation of Morphological Data Matrices*. (Journal and full citation details to be updated upon publication).
+Jariwala, S., Long-Fox, B. L., & Berardini, T. Z. (2025). _Advancing FAIR Data Management through AI-Assisted Curation of Morphological Data Matrices_. (Journal and full citation details to be updated upon publication).
 
 **BibTeX:**
+
 ```bibtex
 @article{Jariwala2025MatrixCurator,
   title   = {Advancing FAIR Data Management through AI-Assisted Curation of Morphological Data Matrices},

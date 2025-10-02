@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./app.py:/app/app.py
+      - ./test_routes.py:/app/test_routes.py
+      - ./src:/app/src
+    command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    container_name: mb4-curator-api-dev

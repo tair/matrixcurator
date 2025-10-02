@@ -20,10 +20,14 @@ class ExtractionEvaluationService:
         self.context_upload = context_upload if context_upload is not None else None
         self.total_characters = total_characters
         self.zero_indexed = zero_indexed if zero_indexed is not None else False
-        self.langfuse_client = self._langfuse_client()
-        self.system_prompt = self.langfuse_client.get_prompt("system_prompt").prompt
-        self.extraction_prompt = self.langfuse_client.get_prompt("extraction_prompt").prompt
-        self.evaluation_prompt = self.langfuse_client.get_prompt("evaluation_prompt").prompt
+        # self.langfuse_client = self._langfuse_client()
+        # self.system_prompt = self.langfuse_client.get_prompt("system_prompt").prompt
+        # self.extraction_prompt = self.langfuse_client.get_prompt("extraction_prompt").prompt
+        # self.evaluation_prompt = self.langfuse_client.get_prompt("evaluation_prompt").prompt
+        self.system_prompt = "You are a helpful and precise research assistant. Focus on extracting the requested character descriptions and corresponding states accurately from the provided text."
+        self.extraction_prompt = "Here is a section of text from a phylogenetic research paper. Please extract the character descriptions and their corresponding states for character index: {character_index} Previous attempts to extract information for this character index have yielded these incorrect results:"
+        self.evaluation_prompt = "Evaluate the generated answer based on the previously provided section of a phylogenetic research paper and the following user query. User Query: {extraction_prompt} Generated Answer: {extraction_reponse} Scoring Criteria: - 1-3: The generated answer is not relevant to the user query. - 4-6: The generated answer is relevant to the query but contains mistakes. A score of 4 indicates more significant errors, while 6 indicates minor errors. - 7-10: The generated answer is relevant and fully correct, accurately extracting the complete character description and all corresponding states for the requested character index. A score of 7 indicates an ok answer, while 10 indicates a perfect extraction."
+
         self.gemini_service = self._gemini_service()
 
     @log_execution
@@ -55,9 +59,10 @@ class ExtractionEvaluationService:
         
         extraction_prompt = self.extraction_prompt.format(character_index=character_index)
         
-        max_attempts = 5
+        max_attempts = 0  # Changed from 5 to 0 for testing (1 attempt only, no retries)
         base_delay = 1
         attempt = 0
+        last_error = None
         
         while attempt <= max_attempts:
             try:
@@ -66,8 +71,8 @@ class ExtractionEvaluationService:
             
                 # Attempt the evaluation
                 evaluation_prompt = self.evaluation_prompt.format(
-                    user_query=extraction_response, 
-                    generated_answer=extraction_response
+                    extraction_prompt=extraction_prompt, 
+                    extraction_reponse=extraction_response
                 )
                 evaluation_response = self.gemini_service.evaluate(prompt=evaluation_prompt)
                 
@@ -80,15 +85,23 @@ class ExtractionEvaluationService:
                     extraction_prompt = extraction_prompt + f"\nAttempt {attempt}: {extraction_response}"
                     
             except Exception as e:  # You should catch specific exceptions here
-                if "429" in str(e).lower() or "exceeded your current quota" in str(e).lower():
-                    # Exponential backoff with jitter
-                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), 60)  # Max 60 seconds
-                    time.sleep(delay)
-                    continue
+                last_error = e  # Store the last error
+                if "429" in str(e).lower() or "exceeded your current quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e):
+                    # Quota exhaustion - re-raise immediately as this is not recoverable
+                    print(f"Quota exhausted for character {character_index}: {str(e)}")
+                    raise
+                elif "RESOURCE_EXHAUSTED" in str(e):
+                    # Also catch RESOURCE_EXHAUSTED directly
+                    print(f"Resource exhausted for character {character_index}: {str(e)}")
+                    raise
                 else:
-                    continue
+                    # For any other error, break the loop to avoid infinite retries
+                    print(f"Error in cycle for character {character_index}: {str(e)}")
+                    break
         
-        print(f"Failed after {max_attempts} attempts")
+        print(f"Failed after {max_attempts} attempts for character {character_index}")
+        if last_error:
+            print(f"Last error: {str(last_error)}")
         return None
 
     @log_execution
@@ -107,18 +120,36 @@ class ExtractionEvaluationService:
 
             successful_results = []
             failed_indexes = []
+            quota_exceeded = False
             
             # Process results with progress updates
             for i, (character_index, future) in enumerate(futures):
-                result = future.result()
-                if result is None:
-                    failed_indexes.append(character_index)
-                else:
-                    successful_results.append(result)
+                try:
+                    result = future.result()
+                    if result is None:
+                        failed_indexes.append(character_index)
+                    else:
+                        successful_results.append(result)
+                except Exception as e:
+                    # Check if this is a quota exhaustion error
+                    error_str = str(e)
+                    if "429" in error_str or "exceeded your current quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str:
+                        print(f"Quota exceeded error caught in run_cycle: {error_str}")
+                        quota_exceeded = True
+                        failed_indexes.append(character_index)
+                        # Don't re-raise yet, let other futures complete
+                    else:
+                        # For other errors, just mark as failed
+                        print(f"Error processing character {character_index}: {error_str}")
+                        failed_indexes.append(character_index)
                 
                 # Update progress if callback provided
                 if progress_callback:
                     progress = (i + 1) / total_tasks
                     progress_callback(progress)
+            
+            # If quota was exceeded and we have no successful results, raise an error
+            if quota_exceeded and len(successful_results) == 0:
+                raise Exception("API quota exceeded. No characters were successfully extracted. Please check your API limits.")
 
             return successful_results, failed_indexes
