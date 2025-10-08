@@ -5,11 +5,17 @@ from datetime import datetime
 from typing import Optional
 import os
 import sys
-from io import BytesIO
+from io import BytesIO, StringIO
 from dotenv import load_dotenv
+import pandas as pd
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -396,6 +402,98 @@ async def process_pdf(
                 status_code=500,
                 detail=f"Processing failed: {str(e)}"
             )
+
+
+@app.post("/api/upload-csv")
+async def upload_csv(
+    csv_file: UploadFile = File(..., description="CSV or Excel file to convert to NEXUS/TNT format")
+):
+    """
+    CSV/Excel uploader endpoint that converts morphological matrices to NEXUS or TNT format.
+    
+    This endpoint:
+    1. Accepts a CSV or Excel file (.csv or .xlsx)
+    2. Auto-detects whether data is morphological (discrete) or numeric (continuous)
+    3. Converts to NEXUS format (for discrete data) or TNT format (for numeric data)
+    4. Returns the converted file content and metadata
+    
+    Returns:
+        - success: Boolean indicating success
+        - filename: Name of the uploaded file
+        - format: Output format ('nexus' or 'tnt')
+        - mode: Data mode ('standard' or 'numeric')
+        - content: Converted file content as string
+        - ntax: Number of taxa
+        - nchar: Number of characters
+        - detection_ratio: Ratio used for mode detection
+        - warnings: List of any warnings during conversion
+    """
+    try:
+        from parser import CSVConverterService
+        
+        # Validate file type
+        file_ext = os.path.splitext(csv_file.filename)[1].lower()
+        if file_ext not in ['.csv', '.xlsx']:
+            raise HTTPException(
+                status_code=400, 
+                detail="File must be a CSV (.csv) or Excel (.xlsx) file"
+            )
+        
+        # Read file
+        file_bytes = await csv_file.read()
+        
+        # Initialize converter service
+        converter = CSVConverterService()
+        
+        # Convert the file
+        result = converter.convert(file_bytes, file_ext)
+        
+        # Log conversion details
+        logger.info(f"=== CSV/Excel Conversion: {csv_file.filename} ===")
+        logger.info(f"Detected mode: {result['mode']}")
+        logger.info(f"Output format: {result['format']}")
+        logger.info(f"Taxa: {result['ntax']}")
+        logger.info(f"Characters: {result['nchar']}")
+        logger.info(f"Detection ratio: {result['detection_ratio']:.2f}")
+        if result['warnings']:
+            for warning in result['warnings']:
+                logger.warning(warning)
+        
+        # Prepare output filename
+        base_name = os.path.splitext(csv_file.filename)[0]
+        output_filename = f"{base_name}.{result['format'][:3]}"  # .nex or .tnt
+        
+        return {
+            "success": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "filename": csv_file.filename,
+            "output_filename": output_filename,
+            "format": result['format'],
+            "mode": result['mode'],
+            "content": result['content'],
+            "ntax": result['ntax'],
+            "nchar": result['nchar'],
+            "detection_ratio": result['detection_ratio'],
+            "warnings": result['warnings']
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="File is empty")
+    except pd.errors.ParserError as e:
+        raise HTTPException(status_code=400, detail=f"File parsing error: {str(e)}")
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to decode file. Please ensure it's UTF-8 encoded."
+        )
+    except Exception as e:
+        logger.error(f"Error processing file: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"File processing failed: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

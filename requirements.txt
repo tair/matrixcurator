@@ -17,3 +17,6 @@ pydantic_settings
 fastapi
 uvicorn[standard]
 python-dotenv
+python-multipart
+pandas
+openpyxl
