@@ -94,6 +94,54 @@ class CSVConverterService:
             raise ValueError(f"Error reading input file: {str(e)}")
     
     @log_execution
+    def validate_header_row(self, df: pd.DataFrame) -> None:
+        """
+        Validate that the first row contains proper headers (character names),
+        not actual data (taxon name and character scores).
+        
+        Args:
+            df: DataFrame containing the matrix data
+            
+        Raises:
+            ValueError: If the first row appears to be data instead of headers
+        """
+        if df.shape[0] < 1:
+            raise ValueError("CSV file is empty")
+        
+        first_row = df.iloc[0]
+        first_cell = first_row.iloc[0]
+        
+        # Check if first cell (row 0, col 0) is empty or looks like a header label
+        # Valid header labels: empty, "Taxa", "Taxon", "Species", "OTU", etc.
+        header_labels = ['taxa', 'taxon', 'species', 'otu', 'organism', 'name', 'terminal', 'states', '']
+        first_cell_str = str(first_cell).strip().lower() if pd.notna(first_cell) else ''
+        
+        # If first cell doesn't match common header patterns, check if rest of row looks like scores
+        if first_cell_str not in header_labels:
+            # Check if the rest of the first row contains mostly numeric values
+            # which would suggest it's data, not character names
+            rest_of_row = first_row.iloc[1:]
+            non_empty = rest_of_row.dropna()
+            
+            if len(non_empty) > 0:
+                # Count how many cells look like character scores (numbers, ?, -, NA, etc.)
+                score_like_pattern = r'^[-]?[\d.]+$|^[\?-]$|^NA$|^\d+&\d+$'
+                score_like_count = non_empty.astype(str).str.match(score_like_pattern).sum()
+                score_ratio = score_like_count / len(non_empty)
+                
+                # If more than 70% of the row looks like scores, it's probably data not headers
+                if score_ratio > 0.7:
+                    raise ValueError(
+                        "Invalid CSV format: First row must be headers (character names), not data."
+                    )
+        
+        # Also validate that the character names (rest of first row) aren't all empty
+        char_names = first_row.iloc[1:]
+        non_empty_chars = char_names.dropna()
+        if len(non_empty_chars) == 0:
+            raise ValueError("Invalid CSV format: No character names found in first row.")
+    
+    @log_execution
     def detect_mode(self, df: pd.DataFrame) -> Tuple[str, float, Optional[str]]:
         """
         Determine if the matrix is morphological (standard) or numeric.
@@ -283,6 +331,9 @@ class CSVConverterService:
         """
         # Load the matrix
         df = self.load_matrix(file, file_extension)
+        
+        # Validate that the first row contains headers, not data
+        self.validate_header_row(df)
         
         # Detect mode
         mode, ratio, warning = self.detect_mode(df)

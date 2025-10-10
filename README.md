@@ -1,3 +1,11 @@
+docker compose build --no-cache
+docker compose up -d
+docker-compose up --build -d
+docker-compose logs -f
+
+#connect mb4-service network
+docker network connect mb4-service_default mb4-curator-api-dev
+
 # MatrixCurator
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
