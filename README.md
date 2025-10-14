@@ -1,5 +1,5 @@
 docker compose build --no-cache
-docker compose up -d
+docker-compose down
 docker-compose up --build -d
 docker-compose logs -f
 

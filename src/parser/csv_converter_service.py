@@ -132,14 +132,14 @@ class CSVConverterService:
                 # If more than 70% of the row looks like scores, it's probably data not headers
                 if score_ratio > 0.7:
                     raise ValueError(
-                        "Invalid CSV format: First row must be headers (character names), not data."
+                        "Invalid CSV/XLSX format: First row must be headers (character names), not data."
                     )
         
         # Also validate that the character names (rest of first row) aren't all empty
         char_names = first_row.iloc[1:]
         non_empty_chars = char_names.dropna()
         if len(non_empty_chars) == 0:
-            raise ValueError("Invalid CSV format: No character names found in first row.")
+            raise ValueError("Invalid CSV/XLSX format: No character names found in first row.")
     
     @log_execution
     def detect_mode(self, df: pd.DataFrame) -> Tuple[str, float, Optional[str]]:
