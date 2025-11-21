@@ -10,9 +10,9 @@ logger = logging.getLogger()
 def log_execution(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        logger.info(f"Function '{func.__name__}' started")
+        logger.debug(f"Function '{func.__name__}' started")
         result = func(*args, **kwargs)
-        logger.info(f"Function '{func.__name__}' completed")
+        logger.debug(f"Function '{func.__name__}' completed")
         return result
     return wrapper
 

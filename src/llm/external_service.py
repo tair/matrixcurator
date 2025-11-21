@@ -6,7 +6,15 @@ from google.genai import types
 import json
 from io import BytesIO
 import base64
+import logging
 from .exceptions import log_execution, handle_exceptions
+
+# Suppress google_genai verbose logs
+logging.getLogger('google_genai.models').setLevel(logging.WARNING)
+logging.getLogger('google_genai').setLevel(logging.WARNING)
+
+# Set up logger for our custom LLM call logs
+logger = logging.getLogger(__name__)
 
 class GeminiService:
     def __init__(self, extraction_model: str, evaluation_model: str, system_prompt: str, context: Optional[str] = None, context_upload: Optional[BytesIO] = None):
@@ -74,6 +82,9 @@ class GeminiService:
     def extract(self, prompt: str) -> str:
         
         model = self.extraction_model
+        logger.info(f"🔍 Calling LLM for EXTRACTION - Model: {model}")
+        logger.debug(f"Extraction prompt preview: {prompt[:200]}...")
+        
         contents = [
             types.Content(
                 role="user",
@@ -146,6 +157,9 @@ class GeminiService:
     def evaluate(self, prompt: str):
         
         model = self.evaluation_model
+        logger.info(f"✅ Calling LLM for EVALUATION - Model: {model}")
+        logger.debug(f"Evaluation prompt preview: {prompt[:200]}...")
+        
         contents = [
             types.Content(
                 role="user",

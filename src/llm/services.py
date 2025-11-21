@@ -5,10 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
 import time
 import random
+import logging
 from typing import Optional, Dict, Any
 from .external_service import GeminiService
 from .exceptions import log_execution, handle_exceptions
 from config.main import settings
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionEvaluationService:
@@ -26,7 +29,7 @@ class ExtractionEvaluationService:
         # self.evaluation_prompt = self.langfuse_client.get_prompt("evaluation_prompt").prompt
         self.system_prompt = "You are a helpful and precise research assistant. Focus on extracting the requested character descriptions and corresponding states accurately from the provided text."
         self.extraction_prompt = "Here is a section of text from a phylogenetic research paper. Please extract the character descriptions and their corresponding states for character index: {character_index} Previous attempts to extract information for this character index have yielded these incorrect results:"
-        self.evaluation_prompt = "Evaluate the generated answer based on the previously provided section of a phylogenetic research paper and the following user query. User Query: {extraction_prompt} Generated Answer: {extraction_reponse} Scoring Criteria: - 1-3: The generated answer is not relevant to the user query. - 4-6: The generated answer is relevant to the query but contains mistakes. A score of 4 indicates more significant errors, while 6 indicates minor errors. - 7-10: The generated answer is relevant and fully correct, accurately extracting the complete character description and all corresponding states for the requested character index. A score of 7 indicates an ok answer, while 10 indicates a perfect extraction."
+        self.evaluation_prompt = "Evaluate the generated answer based on the previously provided section of a phylogenetic research paper and the following user query. User Query: {extraction_prompt} Generated Answer: {extraction_response} Scoring Criteria: - 1-3: The generated answer is not relevant to the user query. - 4-6: The generated answer is relevant to the query but contains mistakes. A score of 4 indicates more significant errors, while 6 indicates minor errors. - 7-10: The generated answer is relevant and fully correct, accurately extracting the complete character description and all corresponding states for the requested character index. A score of 7 indicates an ok answer, while 10 indicates a perfect extraction."
 
         self.gemini_service = self._gemini_service()
 
@@ -66,15 +69,19 @@ class ExtractionEvaluationService:
         
         while attempt <= max_attempts:
             try:
+                logger.info(f"📝 Processing Character {character_index} (attempt {attempt + 1}/{max_attempts + 1})")
+                
                 # Attempt the extraction
                 extraction_response = self.gemini_service.extract(prompt=extraction_prompt)
+                logger.info(f"✓ Extraction completed for Character {character_index}")
             
                 # Attempt the evaluation
                 evaluation_prompt = self.evaluation_prompt.format(
                     extraction_prompt=extraction_prompt, 
-                    extraction_reponse=extraction_response
+                    extraction_response=extraction_response
                 )
                 evaluation_response = self.gemini_service.evaluate(prompt=evaluation_prompt)
+                logger.info(f"✓ Evaluation completed for Character {character_index} - Score: {evaluation_response.get('score', 'N/A')}")
                 
                 if evaluation_response["score"] >= 8:
                     response = {**character_index_dict, **extraction_response, **evaluation_response}
@@ -107,11 +114,18 @@ class ExtractionEvaluationService:
     @log_execution
     @handle_exceptions
     def run_cycle(self, progress_callback=None) -> tuple[list[dict], list[int]]:
+        start_index = 0 if self.zero_indexed else 1
+        # Limit to maximum 10 characters
+        end_index = min(self.total_characters, 10)
+        total_tasks = end_index - start_index + 1
+        
+        logger.info(f"🚀 Starting extraction cycle for {total_tasks} characters (indices {start_index} to {end_index})")
+        logger.info(f"   Extraction model: {self.extraction_model}")
+        logger.info(f"   Evaluation model: {self.evaluation_model}")
+        logger.info(f"   Max workers: {settings.max_workers}")
+        
         with ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
             futures = []
-            start_index = 0 if self.zero_indexed else 1
-            end_index = self.total_characters
-            total_tasks = end_index - start_index + 1
 
             # Submit all tasks
             for character_index in range(start_index, end_index + 1):
