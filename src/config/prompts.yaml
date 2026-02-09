@@ -1,0 +1,46 @@
+# =============================================================================
+# MB4 Curator - LLM Prompts Configuration
+# =============================================================================
+# Edit these prompts to change how the AI extracts and evaluates characters
+# from phylogenetic research papers. No code changes needed.
+#
+# Available placeholders:
+#   extraction_prompt:  {total_characters}
+#   evaluation_prompt:  {extraction_response}
+# =============================================================================
+
+system_prompt: >
+  You are a helpful and precise research assistant specializing in
+  phylogenetic systematics. Focus on extracting morphological character
+  descriptions and their corresponding states accurately from the
+  provided text.
+
+extraction_prompt: >
+  Extract ALL morphological characters and their corresponding character
+  states from this phylogenetic research paper.
+
+  For each character, provide:
+  - The character name/description exactly as written in the paper
+    (concise name only, not the full paragraph description).
+  - All possible states for that character, listed in the order they
+    appear in the paper.
+
+  Important:
+  - Extract every character you can find, up to {total_characters}.
+  - Use the exact terminology from the paper.
+  - Each state should be a short label, not a full sentence.
+  - Do not invent characters or states that are not in the paper.
+
+evaluation_prompt: >
+  Evaluate the following batch extraction of morphological characters
+  from a phylogenetic research paper.
+
+  Extracted data:
+  {extraction_response}
+
+  Scoring Criteria:
+  - 1-3: Most characters are missing, fabricated, or fundamentally wrong.
+  - 4-6: Some characters are correct but there are significant omissions
+    or errors in names/states. Score 4 for major issues, 6 for moderate.
+  - 7-10: Characters are accurately extracted with correct states matching
+    the paper. Score 7 for minor issues, 10 for a perfect extraction.

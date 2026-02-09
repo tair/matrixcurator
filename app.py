@@ -20,18 +20,12 @@ logger = logging.getLogger(__name__)
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-# Import test routes
-from test_routes import router as test_router
-
 # Initialize FastAPI app
 app = FastAPI(
     title="MatrixCurator API",
     description="API for phylogenetic character data extraction and NEXUS file generation",
     version="2025.7.4"
 )
-
-# Include test routes
-app.include_router(test_router)
 
 # Configure CORS
 app.add_middleware(
@@ -123,9 +117,12 @@ async def llm_health_check():
         # Try to initialize the client
         client = genai.Client(api_key=api_key)
         
-        # Try a simple test generation
+        # Try a simple test generation using a model from settings
+        from config.main import settings
+        test_model = settings.MODELS[settings.default_extraction_model]
+        
         test_response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model=test_model,
             contents="Say 'OK' if you can read this."
         )
         
@@ -138,7 +135,7 @@ async def llm_health_check():
             "configured": True,
             "api_connected": True,
             "test_response": response_text,
-            "model": "gemini-2.0-flash-exp"
+            "model": test_model
         }
         
     except ImportError as e:
@@ -175,10 +172,13 @@ async def custom_extraction(request: CustomExtractionRequest):
         # System prompt for character extraction
         system_prompt = "You are an expert at extracting phylogenetic character data from scientific texts. Extract the requested character information accurately."
         
-        # Initialize GeminiService with user context
+        # Initialize GeminiService with user context using configured models
+        from config.main import settings
+        extraction_model_id = settings.MODELS[settings.default_extraction_model]
+        
         gemini_service = GeminiService(
-            extraction_model="gemini-2.0-flash-exp",
-            evaluation_model="gemini-2.0-flash-exp",
+            extraction_model=extraction_model_id,
+            evaluation_model=extraction_model_id,
             system_prompt=system_prompt,
             context=request.context
         )
@@ -195,6 +195,8 @@ async def custom_extraction(request: CustomExtractionRequest):
             "states": extraction_result.get("states")
         }
         
+    except HTTPException:
+        raise
     except ImportError as e:
         raise HTTPException(
             status_code=500,
@@ -226,10 +228,13 @@ async def custom_evaluation(request: CustomEvaluationRequest):
         # System prompt for evaluation
         system_prompt = "You are an expert at evaluating phylogenetic character extraction quality."
         
-        # Initialize GeminiService
+        # Initialize GeminiService using configured models
+        from config.main import settings
+        evaluation_model_id = settings.MODELS[settings.default_evaluation_model]
+        
         gemini_service = GeminiService(
-            extraction_model="gemini-2.0-flash-exp",
-            evaluation_model="gemini-2.0-flash-exp",
+            extraction_model=evaluation_model_id,
+            evaluation_model=evaluation_model_id,
             system_prompt=system_prompt,
             context=request.context
         )
@@ -261,6 +266,8 @@ async def custom_evaluation(request: CustomEvaluationRequest):
             "justification": evaluation_result.get("justification")
         }
         
+    except HTTPException:
+        raise
     except ImportError as e:
         raise HTTPException(
             status_code=500,
@@ -360,6 +367,9 @@ async def process_pdf(
         end_time = time.time()
         processing_time = round(end_time - start_time, 2)
         
+        # Get token usage stats
+        token_usage = extraction_evaluation_service.get_token_usage()
+        
         # Prepare response
         return {
             "success": True,
@@ -375,10 +385,13 @@ async def process_pdf(
                 "successful_extractions": len(character_states_list),
                 "failed_extractions": len(failed_indexes)
             },
+            "token_usage": token_usage,
             "character_states": character_states_list,
             "failed_indexes": failed_indexes
         }
         
+    except HTTPException:
+        raise
     except ImportError as e:
         raise HTTPException(
             status_code=500,
@@ -477,6 +490,8 @@ async def upload_csv(
             "warnings": result['warnings']
         }
         
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except pd.errors.EmptyDataError:

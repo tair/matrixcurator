@@ -1,37 +1,24 @@
-docker compose build --no-cache
-docker-compose down
-docker-compose up --build -d
-docker-compose logs -f
-
-#connect mb4-service network
-docker network connect mb4-service_default mb4-curator-api-dev
-
 # MatrixCurator
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-An AI-powered tool to automate the extraction of morphological character data from scientific publications and generate standardized, FAIR-compliant NEXUS files for phylogenetic analysis.
-
-| Deployment      | Link                                                                                                                                           | Purpose                     |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| **Primary App** | [![Tailscale Funnel](https://img.shields.io/badge/Tailscale-Funnel-blue.svg?logo=tailscale)](https://matrixcurator.tortoise-butterfly.ts.net/) | Main application link.      |
-| **Mirror**      | [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://matrixcurator.streamlit.app/)                   | Backup link for redundancy. |
+An AI-powered tool to automate the extraction of morphological character data from scientific publications and generate standardized, FAIR-compliant NEXUS files for phylogenetic analysis. Developed for the [MorphoBank](https://morphobank.org) repository.
 
 ---
 
 ## Table of Contents
 
 - [About The Project](#about-the-project)
+- [Architecture Overview](#architecture-overview)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Configuration](#configuration)
-- [Usage](#usage)
-  - [Running with Streamlit](#running-with-streamlit)
-  - [Running with Docker](#running-with-docker)
+- [API Endpoints](#api-endpoints)
+- [Connecting to mb4-server](#connecting-to-mb4-server)
 - [Project Structure](#project-structure)
 - [Citation](#citation)
 - [Contributing](#contributing)
@@ -43,7 +30,7 @@ An AI-powered tool to automate the extraction of morphological character data fr
 
 The curation of biological and paleontological datasets, particularly morphological matrices, is a labor-intensive and error-prone process. Data is often locked away in published literature (PDFs, DOCX files) in inconsistent formats, hindering reproducibility and compliance with FAIR (Findable, Accessible, Interoperable, and Reusable) data principles.
 
-**MatrixCurator** addresses this challenge by leveraging Large Language Models (LLMs) to automate the entire curation workflow. Developed for the [MorphoBank](https://morphobank.org) repository, this tool transforms unstructured character descriptions from research papers into structured, machine-readable `CHARSTATELABELS` blocks within a NEXUS file.
+**MatrixCurator** addresses this challenge by leveraging Large Language Models (LLMs) to automate the entire curation workflow. It transforms unstructured character descriptions from research papers into structured, machine-readable `CHARSTATELABELS` blocks within a NEXUS file.
 
 This project aims to:
 
@@ -51,227 +38,239 @@ This project aims to:
 - **Improve data quality** by minimizing transcription errors and standardizing formats.
 - **Enhance data reusability** by producing complete, FAIR-compliant NEXUS files.
 
+## Architecture Overview
+
+| Component            | Technology      | Port  | Purpose                                    |
+| -------------------- | --------------- | ----- | ------------------------------------------ |
+| **FastAPI Backend**  | FastAPI/Uvicorn | 8001  | REST API for all operations                |
+| **React Frontend**   | Vite + React    | 3000  | Interactive demo UI for character extraction|
+
+The FastAPI backend is the **primary interface** and is what gets deployed in Docker. The React frontend communicates with the FastAPI backend via REST API calls.
+
+In production, the FastAPI container joins a **shared Docker network** (`shared_network`) to communicate with other MorphoBank services, including `mb4-server`.
+
 ## Key Features
 
-- **Automated Data Extraction**: Uses Google's Gemini family of LLMs to intelligently parse and extract character names and their corresponding states from text.
-- **Multi-Parser Support**: Robustly handles various document formats (`.pdf`, `.docx`, `.txt`) with multiple parsing backends, including:
-  - Google's Gemini native multimodal capabilities
-  - LlamaParse
-  - PyMuPDF
-  - python-docx
-- **AI-Powered Validation**: Employs a multi-agent system where an `Evaluator` agent scores the accuracy of the extracted data, ensuring high-quality output. The system retries with corrective prompts if the quality is below a set threshold.
-- **NEXUS File Generation**: Seamlessly integrates the extracted character data into an existing NEXUS file, creating or updating the `CHARSTATELABELS` block.
-- **Web-Based Interface**: Built with Streamlit for an intuitive, user-friendly experience that requires no coding to use.
-- **Efficient & Cost-Effective**: Utilizes LLM context caching to reduce API token consumption by over 90% for large documents, making the process both fast and affordable.
+- **Automated Data Extraction**: Uses Google Gemini (`gemini-2.5-flash`) to intelligently parse and extract character names and their corresponding states from uploaded PDF documents. The PDF is sent directly to Gemini's multimodal API for parsing and extraction.
+- **AI-Powered Validation**: Multi-agent system where an Evaluator agent (`gemini-2.5-pro`) scores the extraction accuracy (1-10). The system retries with corrective prompts if quality is below threshold (score < 8).
+- **NEXUS File Generation**: Integrates extracted character data into existing NEXUS files, creating or updating the `CHARSTATELABELS` block.
+- **CSV/Excel to NEXUS/TNT Conversion**: Auto-detects whether uploaded matrix data is morphological (discrete) or numeric (continuous) and converts to the appropriate format (NEXUS or TNT).
+- **Context Caching**: Caches the parsed document via Gemini's API caching mechanism (TTL: 1 hour) so that each character extraction call reuses the cached context instead of re-sending the full document. This reduces token consumption significantly for large documents.
+- **Concurrent Processing**: Extracts multiple characters in parallel using `ThreadPoolExecutor` (configurable `max_workers`) for faster throughput.
+- **Error Tracking**: Integrated Sentry support for exception monitoring in production.
 
 ## How It Works
 
 The MatrixCurator pipeline is a multi-step process designed for accuracy and efficiency:
 
-1.  **User Input**: The user uploads a research article (PDF/DOCX), a base NEXUS file (typically containing only the TAXA and MATRIX blocks), and specifies parameters like the total number of characters and the relevant page range in the article.
+1. **User Input**: A PDF research article is uploaded along with parameters (total characters, page range, zero-indexed flag).
 
-2.  **Document Parsing**: The selected pages of the article are isolated and parsed into a machine-readable format (Markdown or raw text) using the chosen parsing engine.
+2. **Document Parsing**: The specified page range is extracted from the PDF, and the raw PDF bytes are sent directly to Google Gemini's multimodal API for processing.
 
-3.  **AI Core - Multi-Agent Extraction & Evaluation**:
+3. **AI Core - Multi-Agent Extraction & Evaluation**:
+   - **Context Caching**: The parsed document is cached via Gemini's API caching mechanism (TTL: 1 hour) to avoid re-sending the full document on each character extraction call.
+   - **Retriever Agent**: For each character number, this agent reads the cached document and extracts the character's name and its list of states as a structured JSON object (`{character, states}`).
+   - **Evaluator Agent**: The extraction result is evaluated against the source text, producing a score (1-10) and justification as JSON (`{score, justification}`).
+   - **Self-Correction Loop**: If the score is below threshold (8), the process retries with corrective prompts appending previous failed attempts for context.
 
-    - **Retriever Agent**: For each character number, this agent is prompted to read the parsed document and extract the character's name and its list of states as JSON object.
-    - **Evaluator Agent**: The extracted data is passed to this agent, which compares it against the source text to assign an accuracy score (1-10).
-    - **Self-Correction Loop**: If the score is below a threshold (e.g., 8), the process is retried with a corrective prompt. This ensures high-fidelity extraction.
+4. **NEXUS File Update**: The structured JSON data is converted into `CHARSTATELABELS` format and inserted before the `MATRIX` block in the user's original NEXUS file. Any existing `CHARSTATELABELS` block is replaced.
 
-4.  **NEXUS File Update**: The structured JSON data is converted into the `CHARSTATELABELS` format and inserted into the correct position within the user's original NEXUS file.
-
-5.  **Output**: The final, complete NEXUS file is made available for download.
+5. **Output**: The final NEXUS file is returned for download.
 
 ## Getting Started
 
-Follow these instructions to set up and run the MatrixCurator project locally.
-
 ### Prerequisites
 
-- [Python](https://www.python.org/) 3.12+
+- [Docker](https://www.docker.com/) and Docker Compose
 - [Git](https://git-scm.com/)
-- [Docker](https://www.docker.com/) (Optional, for containerized deployment)
-- API keys for required services (see [Configuration](#configuration))
+- A Google Gemini API key (see [Configuration](#configuration))
 
 ### Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/MorphoEx/morphoex.git
-    cd morphoex
-    ```
-2.  **Install Python dependencies:**
-    It is recommended to use a virtual environment.
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-    pip install -r requirements.txt
-    ```
-3.  **Configure API Keys:**
-    See the [Configuration](#configuration) section below to set up your API keys.
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/MorphoBankOrg/matrixcurator.git
+   cd matrixcurator
+   ```
+
+2. **Create the shared Docker network** (required for mb4-server connectivity):
+   ```bash
+   docker network create shared_network
+   ```
+
+3. **Create environment file:**
+   ```bash
+   cp development.env.template .env
+   ```
+   Edit `.env` and add your `GEMINI_API_KEY` (see [Configuration](#configuration)).
+
+4. **Build and start the service:**
+   ```bash
+   docker-compose up --build -d
+   ```
+
+5. **Verify the service is running:**
+   ```bash
+   curl http://localhost:8001/health
+   ```
+
+The API will be available at:
+- **API Root**: `http://localhost:8001`
+- **Swagger Docs**: `http://localhost:8001/docs`
+- **Health Check**: `http://localhost:8001/health`
+
+The Docker Compose setup includes volume mounting for hot-reload during development. Changes to `app.py` or files in `src/` will automatically trigger a reload.
 
 ## Configuration
 
-MatrixCurator requires API keys to interact with external LLM and parsing services. You can provide these keys via a `.streamlit/secrets.toml` file.
-
-1.  **Copy the template:**
-    ```bash
-    cp .streamlit/secrets_template.toml .streamlit/secrets.toml
-    ```
-2.  **Edit the `secrets.toml` file** and add your keys:
-
-    ```toml
-    # .streamlit/secrets.toml
-
-    # Required for accessing Google's Gemini family of models.
-    # Obtain from Google AI Studio (https://aistudio.google.com/app/apikey)
-    GEMINI_API_KEY="your-gemini-api-key"
-
-    # Required for accessing LlamaParse.
-    # Obtain from your LlamaCloud account dashboard.
-    LLAMACLOUD_API_KEY="your-llamacloude-api-key"
-
-    # Required for accessing LLM Prompts.
-    # Obtain from your Langfuse project settings.
-    LANGFUSE_PUBLIC_KEY="pk-lf-..."
-    LANGFUSE_SECRET_KEY="sk-lf-..."
-    LANGFUSE_HOST="https://cloud.langfuse.com" # or your self-hosted instance
-
-    # Optional: For error tracking with Sentry.
-    SENTRY_DSN=""
-    ```
-
-3.  **Set Up Prompts in Langfuse:**
-
-The application dynamically fetches prompts from your Langfuse project. You must create three specific prompts in the Langfuse UI.
-
-Log into your Langfuse project, navigate to the **Prompts** section, and create the following three prompts.
-
-> **Important:** The application fetches prompts by their unique name. You must use the exact names specified below (`system_prompt`, `extraction_prompt`, and `evaluation_prompt`).
-
-**A. Prompt Name: `system_prompt`**
-
-```text
-You are a helpful and precise research assistant. Focus on extracting the requested character descriptions and corresponding states accurately from the provided text.
-```
-
-**B. Prompt Name: `extraction_prompt`**
-
-```text
-Here is a section of text from a phylogenetic research paper. Please extract the character descriptions and their corresponding states for character index: {character_index}
-
-Previous attempts to extract information for this character index have yielded these incorrect results:
-```
-
-**C. Prompt Name: `evaluation_prompt`**
-
-```text
-Evaluate the generated answer based on the previously provided section of a phylogenetic research paper and the following user query.
-
-User Query: {extraction_prompt}
-Generated Answer: {extraction_reponse}
-
-Scoring Criteria:
-- 1-3: The generated answer is not relevant to the user query.
-- 4-6: The generated answer is relevant to the query but contains mistakes. A score of 4 indicates more significant errors, while 6 indicates minor errors.
-- 7-10: The generated answer is relevant and fully correct, accurately extracting the complete character description and all corresponding states for the requested character index. A score of 7 indicates an ok answer, while 10 indicates a perfect extraction.
-```
-
-### Running with Streamlit
-
-Once installed and configured, you can run the web application locally.
+MatrixCurator uses environment variables for configuration. Create a `.env` file from the template:
 
 ```bash
-streamlit run src/streamlit_app.py
+cp development.env.template .env
 ```
 
-Navigate to `http://localhost:8501` in your web browser. From there, you can:
+Edit `.env` and add your values:
 
-1.  Upload your research article (`.pdf`, `.docx`).
-2.  Select the document parsing method.
-3.  Enter the total number of characters and the page range where they are described.
-4.  Choose the LLMs for extraction and evaluation.
-5.  Upload the base NEXUS file to be updated.
-6.  Click "Generate Updated NEXUS File" and download the result.
+```env
+# Required: Google Gemini API key
+# Obtain from Google AI Studio (https://aistudio.google.com/app/apikey)
+GEMINI_API_KEY=your_gemini_api_key_here
 
-### Running with Docker
+# Optional: Environment identifier
+ENVIRONMENT=development
+```
 
-You can run MatrixCurator using a pre-built image or by building it from source.
+### Optional Services
 
-> **Note:** Both `docker run` commands require you to mount your secrets file from `.streamlit/secrets.toml`.
+The following are optional and only needed for specific features:
 
-#### Using the Pre-built Image
+| Variable              | Purpose                                   |
+| --------------------- | ----------------------------------------- |
+| `SENTRY_DSN`          | Sentry error tracking                     |
 
-1.  **Pull the image:**
-    ```bash
-    docker pull ghcr.io/morphobankorg/matrixcurator:latest
-    ```
-2.  **Run the container:**
-    ```bash
-    docker run -p 8501:80 -v "$(pwd)/.streamlit/secrets.toml:/app/.streamlit/secrets.toml" ghcr.io/morphobankorg/matrixcurator:latest
-    ```
+### Model Configuration
 
-#### Building from Source
+Available models are configured in `src/config/main.py`:
 
-1.  **Build the image:**
-    ```bash
-    docker build -t matrixcurator .
-    ```
-2.  **Run the container:**
-    ```bash
-    docker run -p 8501:80 -v "$(pwd)/.streamlit/secrets.toml:/app/.streamlit/secrets.toml" matrixcurator
-    ```
+| Display Name       | API Model ID        | Default Role  |
+| ------------------ | ------------------- | ------------- |
+| Gemini 2.5 Pro     | `gemini-2.5-pro`    | Evaluation    |
+| Gemini 2.5 Flash   | `gemini-2.5-flash`  | Extraction    |
+| Gemini 2.0 Flash   | `gemini-2.0-flash`  | -             |
 
-#### Using Docker Compose (for Development)
+### Using the Pre-built Image
 
-For local development with hot-reload:
+Alternatively, you can use the pre-built image without building locally:
 
-1.  **Create environment file:**
+```bash
+docker pull ghcr.io/morphobankorg/matrixcurator:latest
+docker run -p 8001:8001 -e GEMINI_API_KEY=your_key ghcr.io/morphobankorg/matrixcurator:latest
+```
 
-    ```bash
-    cp development.env.template .env
-    ```
+### Building & Pushing a Release
 
-    Edit `.env` and add your `GEMINI_API_KEY`.
+Use the included `build.sh` script:
 
-2.  **Start the service:**
+```bash
+./build.sh v2025.7.4
+```
 
-    ```bash
-    docker-compose up
-    ```
+This builds the Docker image, tags it with both the specified version and `latest`, and pushes to `ghcr.io/morphobankorg/matrixcurator`.
 
-3.  **Access the API:**
-    - API: `http://localhost:8001`
-    - API Documentation: `http://localhost:8001/docs`
-    - Health Check: `http://localhost:8001/health`
+## API Endpoints
 
-The Docker Compose setup includes volume mounting for hot-reload during development. Any changes to `app.py`, `test_routes.py`, or files in the `src/` directory will automatically trigger a reload.
+### Core Endpoints
 
-Once started, the application is available at **`http://localhost:8501`** (Streamlit) or **`http://localhost:8001`** (FastAPI).
+| Method | Path                     | Description                                              |
+| ------ | ------------------------ | -------------------------------------------------------- |
+| `GET`  | `/`                      | API info and version                                     |
+| `GET`  | `/health`                | Health check                                             |
+| `GET`  | `/test`                  | Test route with capability listing                       |
+| `GET`  | `/llm/health`            | LLM/Gemini connectivity and API key check                |
+
+### Processing Endpoints
+
+| Method | Path                     | Description                                              |
+| ------ | ------------------------ | -------------------------------------------------------- |
+| `POST` | `/api/process-pdf`       | Full PDF processing pipeline (parse → extract → evaluate)|
+| `POST` | `/api/upload-csv`        | CSV/Excel to NEXUS/TNT conversion                        |
+| `POST` | `/api/custom-extraction` | Custom character extraction with user-provided context    |
+| `POST` | `/api/custom-evaluation` | Evaluate quality of an extraction result                  |
+
+### Key Request/Response Examples
+
+**Process PDF** (`POST /api/process-pdf`):
+- Form fields: `pdf_file` (file), `total_characters` (int), `page_range` (str, optional), `zero_indexed` (bool), `extraction_model` (str), `evaluation_model` (str)
+- Returns: `character_states[]`, `failed_indexes[]`, processing metadata
+
+**Upload CSV** (`POST /api/upload-csv`):
+- Form field: `csv_file` (file, `.csv` or `.xlsx`)
+- Returns: converted content (NEXUS or TNT format), detection mode, taxa/character counts
+
+**Custom Extraction** (`POST /api/custom-extraction`):
+- JSON body: `{context: str, prompt: str}`
+- Returns: `{character: str, states: str[]}`
+
+## Connecting to mb4-server
+
+The MatrixCurator container communicates with `mb4-server` via a shared Docker network. This enables the mb4-server (MorphoBank's main application) to call the curator's API endpoints for AI-powered character extraction and CSV conversion.
+
+### Setup
+
+1. **Create the shared network** (if not already created):
+   ```bash
+   docker network create shared_network
+   ```
+
+2. **Start mb4-curator** (it auto-joins `shared_network` via docker-compose):
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Connect to mb4-server's network** (if mb4-server uses a separate network):
+   ```bash
+   docker network connect mb4-service_default mb4-curator-api-dev
+   ```
+
+Once connected, mb4-server can reach the curator API at `http://mb4-curator-api-dev:8001` using the Docker container name as hostname.
 
 ## Project Structure
 
-The project is organized into modular components for clarity and maintainability.
-
 ```
-morphobankorg-matrixcurator/
+mb4-curator/
+├── app.py                          # FastAPI application (primary entry point)
+├── tests/
+│   └── test_curator.py             # Unit and end-to-end test suite (pytest)
 ├── src/
-│   ├── streamlit_app.py        # Main Streamlit application UI and entry point
-│   ├── llm/                    # Handles all LLM interactions
-│   │   ├── services.py         # High-level service for extraction/evaluation cycle
-│   │   └── external_service.py # Direct client for the Gemini API
-│   ├── parser/                 # Manages document parsing from different formats
-│   │   ├── services.py         # Main service to orchestrate different parsers
-│   │   └── external_services.py# Client for LlamaParse
-│   ├── nex/                    # Logic for reading and updating NEXUS files
-│   │   └── services.py         # Service to build and insert CHARSTATELABELS
-│   ├── config.py               # Model configurations and defaults
-│   └── utils.py                # General utility functions
-├── .streamlit/
-│   └── secrets_template.toml   # Template for API keys
-├── requirements.txt            # Python dependencies
-├── Dockerfile                  # For building the Docker container
-└── README.md                   # This file
+│   ├── utils.py                    # Utility functions (page range parsing, etc.)
+│   ├── config/
+│   │   └── main.py                 # Pydantic settings (models, defaults, workers)
+│   ├── llm/
+│   │   ├── services.py             # ExtractionEvaluationService (orchestrates extract/evaluate cycle)
+│   │   └── external_service.py     # GeminiService (Gemini API client, caching, extract, evaluate)
+│   ├── parser/
+│   │   ├── services.py             # ParserService (PDF parsing via Gemini)
+│   │   ├── csv_converter_service.py# CSVConverterService (CSV/Excel → NEXUS/TNT)
+│   │   └── utils.py                # PDFService (page range splitting), temp file helpers
+│   └── nex/
+│       └── services.py             # NexService (CHARSTATELABELS generation, NEXUS file update)
+├── frontend/
+│   ├── package.json                # React app dependencies
+│   ├── vite.config.js              # Vite config (port 3000, proxy to FastAPI)
+│   └── src/
+│       ├── App.jsx                 # Main React component
+│       ├── components/
+│       │   └── CustomExtraction.jsx# Interactive extraction demo component
+│       └── services/
+│           └── api.js              # Axios API client for FastAPI backend
+├── docker-compose.yml              # Docker Compose for development (shared_network)
+├── Dockerfile                      # Production Docker image (Python 3.12, FastAPI on port 8001)
+├── build.sh                        # Build, tag, and push Docker image to GHCR
+├── development.env.template        # Environment variable template
+├── requirements.txt                # Python dependencies
+├── pyproject.toml                  # Project metadata (version 2025.7.4)
+├── packages.txt                    # System packages (libreoffice) for Dockerfile
+└── LICENSE                         # GNU GPL v3
 ```
 
 ## Citation
@@ -295,11 +294,11 @@ Jariwala, S., Long-Fox, B. L., & Berardini, T. Z. (2025). _Advancing FAIR Data M
 
 Contributions are welcome! Please feel free to open an issue or submit a pull request.
 
-1.  Fork the Project
-2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the Branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## License
 
@@ -308,7 +307,7 @@ This project is distributed under the GNU GPL v3 License. See `LICENSE` for more
 ## Acknowledgments
 
 - This work was supported by Phoenix Bioinformatics and the US National Science Foundation (NSF-DBI-2049965 and NSF-EAR-2148768).
-- We thank Dr. Maureen A. O’Leary for her ongoing support.
+- We thank Dr. Maureen A. O'Leary for her ongoing support.
 - We acknowledge the use of Google's Gemini models, which were instrumental in the development of this tool.
 
 ## Contact
@@ -316,4 +315,4 @@ This project is distributed under the GNU GPL v3 License. See `LICENSE` for more
 - Shreya Jariwala - [sjariwala@morphobank.org](mailto:sjariwala@morphobank.org)
 - Brooke L. Long-Fox (Corresponding Author) - [blongfox@morphobank.org](mailto:blongfox@morphobank.org)
 
-Project Link: [https://github.com/MorphoEx/morphoex](https://github.com/MorphoEx/matrixcurator)
+Project Link: [https://github.com/MorphoBankOrg/matrixcurator](https://github.com/MorphoBankOrg/matrixcurator)

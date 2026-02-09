@@ -1,15 +1,19 @@
 from langfuse import Langfuse
 import os
 from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import streamlit as st
-import time
-import random
 import logging
+import yaml
 from typing import Optional, Dict, Any
 from .external_service import GeminiService
 from .exceptions import log_execution, handle_exceptions
 from config.main import settings
+
+# Load prompts from external YAML config
+_PROMPTS_PATH = Path(__file__).resolve().parent.parent / "config" / "prompts.yaml"
+with open(_PROMPTS_PATH, "r", encoding="utf-8") as _f:
+    _PROMPTS = yaml.safe_load(_f)
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +27,15 @@ class ExtractionEvaluationService:
         self.context_upload = context_upload if context_upload is not None else None
         self.total_characters = total_characters
         self.zero_indexed = zero_indexed if zero_indexed is not None else False
+        # Prompts loaded from src/config/prompts.yaml
+        # To use Langfuse instead, uncomment the lines below:
         # self.langfuse_client = self._langfuse_client()
         # self.system_prompt = self.langfuse_client.get_prompt("system_prompt").prompt
         # self.extraction_prompt = self.langfuse_client.get_prompt("extraction_prompt").prompt
         # self.evaluation_prompt = self.langfuse_client.get_prompt("evaluation_prompt").prompt
-        self.system_prompt = "You are a helpful and precise research assistant. Focus on extracting the requested character descriptions and corresponding states accurately from the provided text."
-        self.extraction_prompt = "Here is a section of text from a phylogenetic research paper. Please extract the character descriptions and their corresponding states for character index: {character_index} Previous attempts to extract information for this character index have yielded these incorrect results:"
-        self.evaluation_prompt = "Evaluate the generated answer based on the previously provided section of a phylogenetic research paper and the following user query. User Query: {extraction_prompt} Generated Answer: {extraction_response} Scoring Criteria: - 1-3: The generated answer is not relevant to the user query. - 4-6: The generated answer is relevant to the query but contains mistakes. A score of 4 indicates more significant errors, while 6 indicates minor errors. - 7-10: The generated answer is relevant and fully correct, accurately extracting the complete character description and all corresponding states for the requested character index. A score of 7 indicates an ok answer, while 10 indicates a perfect extraction."
+        self.system_prompt = _PROMPTS["system_prompt"]
+        self.extraction_prompt = _PROMPTS["extraction_prompt"]
+        self.evaluation_prompt = _PROMPTS["evaluation_prompt"]
 
         self.gemini_service = self._gemini_service()
 
@@ -57,113 +63,82 @@ class ExtractionEvaluationService:
             gemini_service = GeminiService(extraction_model=self.extraction_model, evaluation_model=self.evaluation_model, system_prompt=self.system_prompt, context_upload=self.context_upload)
             return gemini_service
 
-    def _cycle(self, character_index) -> Optional[Dict[str, Any]]:
-        character_index_dict = {"character_index": character_index}
-        
-        extraction_prompt = self.extraction_prompt.format(character_index=character_index)
-        
-        max_attempts = 0  # Changed from 5 to 0 for testing (1 attempt only, no retries)
-        base_delay = 1
-        attempt = 0
-        last_error = None
-        
-        while attempt <= max_attempts:
-            try:
-                logger.info(f"📝 Processing Character {character_index} (attempt {attempt + 1}/{max_attempts + 1})")
-                
-                # Attempt the extraction
-                extraction_response = self.gemini_service.extract(prompt=extraction_prompt)
-                logger.info(f"✓ Extraction completed for Character {character_index}")
-            
-                # Attempt the evaluation
-                evaluation_prompt = self.evaluation_prompt.format(
-                    extraction_prompt=extraction_prompt, 
-                    extraction_response=extraction_response
-                )
-                evaluation_response = self.gemini_service.evaluate(prompt=evaluation_prompt)
-                logger.info(f"✓ Evaluation completed for Character {character_index} - Score: {evaluation_response.get('score', 'N/A')}")
-                
-                if evaluation_response["score"] >= 8:
-                    response = {**character_index_dict, **extraction_response, **evaluation_response}
-                    return response
-                else:
-                    # If score is low, we'll try again with modified prompt
-                    attempt += 1
-                    extraction_prompt = extraction_prompt + f"\nAttempt {attempt}: {extraction_response}"
-                    
-            except Exception as e:  # You should catch specific exceptions here
-                last_error = e  # Store the last error
-                if "429" in str(e).lower() or "exceeded your current quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e):
-                    # Quota exhaustion - re-raise immediately as this is not recoverable
-                    print(f"Quota exhausted for character {character_index}: {str(e)}")
-                    raise
-                elif "RESOURCE_EXHAUSTED" in str(e):
-                    # Also catch RESOURCE_EXHAUSTED directly
-                    print(f"Resource exhausted for character {character_index}: {str(e)}")
-                    raise
-                else:
-                    # For any other error, break the loop to avoid infinite retries
-                    print(f"Error in cycle for character {character_index}: {str(e)}")
-                    break
-        
-        print(f"Failed after {max_attempts} attempts for character {character_index}")
-        if last_error:
-            print(f"Last error: {str(last_error)}")
-        return None
-
     @log_execution
     @handle_exceptions
     def run_cycle(self, progress_callback=None) -> tuple[list[dict], list[int]]:
-        start_index = 0 if self.zero_indexed else 1
-        # Limit to maximum 10 characters
-        end_index = min(self.total_characters, 10)
-        total_tasks = end_index - start_index + 1
-        
-        logger.info(f"🚀 Starting extraction cycle for {total_tasks} characters (indices {start_index} to {end_index})")
+        """
+        Batch extraction: one LLM call extracts ALL characters, then one
+        evaluation call validates the result.  Returns (results, failed_indexes).
+        """
+        logger.info(f"🚀 Starting BATCH extraction (up to {self.total_characters} characters)")
         logger.info(f"   Extraction model: {self.extraction_model}")
         logger.info(f"   Evaluation model: {self.evaluation_model}")
-        logger.info(f"   Max workers: {settings.max_workers}")
-        
-        with ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
-            futures = []
 
-            # Submit all tasks
-            for character_index in range(start_index, end_index + 1):
-                future = executor.submit(self._cycle, character_index)
-                futures.append((character_index, future))
+        # --- Step 1: Single batch extraction call ---
+        extraction_prompt = self.extraction_prompt.format(
+            total_characters=self.total_characters
+        )
 
-            successful_results = []
-            failed_indexes = []
-            quota_exceeded = False
-            
-            # Process results with progress updates
-            for i, (character_index, future) in enumerate(futures):
-                try:
-                    result = future.result()
-                    if result is None:
-                        failed_indexes.append(character_index)
-                    else:
-                        successful_results.append(result)
-                except Exception as e:
-                    # Check if this is a quota exhaustion error
-                    error_str = str(e)
-                    if "429" in error_str or "exceeded your current quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str:
-                        print(f"Quota exceeded error caught in run_cycle: {error_str}")
-                        quota_exceeded = True
-                        failed_indexes.append(character_index)
-                        # Don't re-raise yet, let other futures complete
-                    else:
-                        # For other errors, just mark as failed
-                        print(f"Error processing character {character_index}: {error_str}")
-                        failed_indexes.append(character_index)
-                
-                # Update progress if callback provided
-                if progress_callback:
-                    progress = (i + 1) / total_tasks
-                    progress_callback(progress)
-            
-            # If quota was exceeded and we have no successful results, raise an error
-            if quota_exceeded and len(successful_results) == 0:
-                raise Exception("API quota exceeded. No characters were successfully extracted. Please check your API limits.")
+        if progress_callback:
+            progress_callback(0.1)  # 10% – starting extraction
 
-            return successful_results, failed_indexes
+        try:
+            characters = self.gemini_service.extract_batch(prompt=extraction_prompt)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                raise Exception("API quota exceeded during extraction. Please check your API limits.")
+            raise
+
+        if not characters:
+            logger.warning("⚠ Batch extraction returned 0 characters")
+            return [], []
+
+        logger.info(f"✅ Batch extraction returned {len(characters)} characters")
+
+        if progress_callback:
+            progress_callback(0.6)  # 60% – extraction done
+
+        # --- Step 2: Single batch evaluation call ---
+        evaluation_prompt = self.evaluation_prompt.format(
+            extraction_response=characters
+        )
+
+        evaluation_score = None
+        try:
+            evaluation_response = self.gemini_service.evaluate(prompt=evaluation_prompt)
+            evaluation_score = evaluation_response.get("score", 0)
+            logger.info(f"✅ Batch evaluation score: {evaluation_score}/10 – {evaluation_response.get('justification', '')[:120]}")
+        except Exception as e:
+            logger.warning(f"⚠ Evaluation call failed, keeping extraction results anyway: {e}")
+            evaluation_score = None  # Treat as pass if evaluation fails
+
+        if progress_callback:
+            progress_callback(0.9)  # 90% – evaluation done
+
+        # --- Step 3: Build results list (same shape the rest of the pipeline expects) ---
+        start_index = 0 if self.zero_indexed else 1
+        successful_results = []
+        for i, char_data in enumerate(characters):
+            result = {
+                "character_index": start_index + i,
+                "character": char_data.get("character", ""),
+                "states": char_data.get("states", []),
+                "score": evaluation_score,
+                "justification": evaluation_response.get("justification", "") if evaluation_score is not None else "evaluation skipped",
+            }
+            successful_results.append(result)
+
+        failed_indexes = []  # Batch mode: no per-character failures
+
+        if progress_callback:
+            progress_callback(1.0)
+
+        logger.info(f"🏁 Batch complete: {len(successful_results)} characters extracted, evaluation score {evaluation_score}")
+        return successful_results, failed_indexes
+    
+    def get_token_usage(self) -> dict:
+        """Return accumulated token usage from the underlying GeminiService."""
+        if self.gemini_service:
+            return dict(self.gemini_service.token_usage)
+        return {}

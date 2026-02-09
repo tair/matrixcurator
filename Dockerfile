@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- FastAPI code ----
-COPY app.py test_routes.py ./
+COPY app.py ./
 COPY src ./src
 
 # ---- expose & run API ----

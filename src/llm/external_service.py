@@ -31,6 +31,15 @@ class GeminiService:
         self.context_upload = self._context_upload(file=context_upload) if context_upload is not None else None
         self.extraction_context_cache = self._cache(model=extraction_model)
         self.evaluation_context_cache = self._cache(model=evaluation_model)
+        
+        # Token usage tracking
+        self.token_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cached_tokens": 0,
+            "total_tokens": 0,
+            "llm_calls": 0,
+        }
     
     @log_execution
     @handle_exceptions
@@ -79,11 +88,11 @@ class GeminiService:
         return context_upload
 
     @handle_exceptions
-    def extract(self, prompt: str) -> str:
+    def extract(self, prompt: str) -> dict:
+        """Extract a single character (legacy one-at-a-time method)."""
         
         model = self.extraction_model
-        logger.info(f"🔍 Calling LLM for EXTRACTION - Model: {model}")
-        logger.debug(f"Extraction prompt preview: {prompt[:200]}...")
+        logger.info(f"🔍 Calling LLM for EXTRACTION (single) - Model: {model}")
         
         contents = [
             types.Content(
@@ -117,7 +126,6 @@ class GeminiService:
         if self.extraction_context_cache is not None:
             generate_content_config.cached_content = self.extraction_context_cache.name
         elif self.context is not None:
-            # If no cache, include the full content in the request
             contents.append(
                 types.Content(
                     role="model",
@@ -127,7 +135,6 @@ class GeminiService:
                 )
             )
         elif self.context_upload is not None:
-            # Add uploaded file to the request
             contents.append(
                 types.Content(
                     role="user",
@@ -140,18 +147,115 @@ class GeminiService:
                 ),
             )
 
-        # Collect all chunks
+        # Collect all chunks and capture usage metadata from last chunk
         full_response = ""
+        last_chunk = None
         for chunk in self.client.models.generate_content_stream(
             model=model,
             contents=contents,
             config=generate_content_config,
         ):
+            last_chunk = chunk
             if chunk.text:
                 full_response += chunk.text
         
-        # Add Decorator
+        # Track token usage
+        self._accumulate_tokens(last_chunk)
+        
         return json.loads(full_response)
+
+    @handle_exceptions
+    def extract_batch(self, prompt: str) -> list[dict]:
+        """
+        Extract ALL characters in a single LLM call.
+        Returns a list of {"character": str, "states": [str, ...]}.
+        """
+        
+        model = self.extraction_model
+        logger.info(f"🔍 Calling LLM for BATCH EXTRACTION - Model: {model}")
+        logger.debug(f"Batch extraction prompt: {prompt[:200]}...")
+        
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=str(prompt)),
+                ],
+            ),
+        ]
+        generate_content_config = types.GenerateContentConfig(
+            
+            response_mime_type="application/json",
+            response_schema=genai.types.Schema(
+                type = genai.types.Type.OBJECT,
+                required = ["characters"],
+                properties = {
+                    "characters": genai.types.Schema(
+                        type = genai.types.Type.ARRAY,
+                        items = genai.types.Schema(
+                            type = genai.types.Type.OBJECT,
+                            required = ["character", "states"],
+                            properties = {
+                                "character": genai.types.Schema(
+                                    type = genai.types.Type.STRING,
+                                ),
+                                "states": genai.types.Schema(
+                                    type = genai.types.Type.ARRAY,
+                                    items = genai.types.Schema(
+                                        type = genai.types.Type.STRING,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        )
+        
+        # Add cached content to config if available
+        if self.extraction_context_cache is not None:
+            generate_content_config.cached_content = self.extraction_context_cache.name
+        elif self.context is not None:
+            contents.append(
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part.from_text(text=self.context),
+                    ],
+                )
+            )
+        elif self.context_upload is not None:
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_bytes(
+                        mime_type="application/pdf",
+                        data=base64.b64decode(str(self.context_base64)),
+                        ),
+                    ],
+                ),
+            )
+
+        # Collect all chunks and capture usage metadata from last chunk
+        full_response = ""
+        last_chunk = None
+        for chunk in self.client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=generate_content_config,
+        ):
+            last_chunk = chunk
+            if chunk.text:
+                full_response += chunk.text
+        
+        # Track token usage
+        self._accumulate_tokens(last_chunk)
+        
+        parsed = json.loads(full_response)
+        characters = parsed.get("characters", [])
+        logger.info(f"✅ Batch extraction returned {len(characters)} characters")
+        return characters
 
     @handle_exceptions
     def evaluate(self, prompt: str):
@@ -212,15 +316,34 @@ class GeminiService:
                 ),
             )
 
-        # Collect all chunks
+        # Collect all chunks and capture usage metadata from last chunk
         full_response = ""
+        last_chunk = None
         for chunk in self.client.models.generate_content_stream(
             model=model,
             contents=contents,
             config=generate_content_config,
         ):
+            last_chunk = chunk
             if chunk.text:
                 full_response += chunk.text
         
-        # Add exception decorator
+        # Track token usage
+        self._accumulate_tokens(last_chunk)
+        
         return json.loads(full_response)
+
+    def _accumulate_tokens(self, chunk):
+        """Extract and accumulate token usage from a Gemini response chunk."""
+        if chunk is None:
+            return
+        try:
+            meta = chunk.usage_metadata
+            if meta:
+                self.token_usage["prompt_tokens"] += getattr(meta, "prompt_token_count", 0) or 0
+                self.token_usage["completion_tokens"] += getattr(meta, "candidates_token_count", 0) or 0
+                self.token_usage["cached_tokens"] += getattr(meta, "cached_content_token_count", 0) or 0
+                self.token_usage["total_tokens"] += getattr(meta, "total_token_count", 0) or 0
+                self.token_usage["llm_calls"] += 1
+        except Exception as e:
+            logger.debug(f"Could not read token usage: {e}")

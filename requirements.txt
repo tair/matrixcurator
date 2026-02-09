@@ -14,9 +14,12 @@ setuptools
 langfuse
 sentry-sdk
 pydantic_settings
+pyyaml
 fastapi
 uvicorn[standard]
 python-dotenv
 python-multipart
 pandas
 openpyxl
+pytest
+httpx<0.28
