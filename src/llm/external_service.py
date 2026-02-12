@@ -1,5 +1,4 @@
 import os
-import streamlit as st
 from typing import Optional, Union
 from google import genai
 from google.genai import types
@@ -19,7 +18,9 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     def __init__(self, extraction_model: str, evaluation_model: str, system_prompt: str, context: Optional[str] = None, context_upload: Optional[BytesIO] = None):
 
-        self.api_key = os.getenv("GEMINI_API_KEY") or st.secrets["GEMINI_API_KEY"]
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY not configured")
         self.client = genai.Client(
             api_key=self.api_key,
         )

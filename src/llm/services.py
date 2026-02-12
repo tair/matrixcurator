@@ -2,7 +2,6 @@ from langfuse import Langfuse
 import os
 from io import BytesIO
 from pathlib import Path
-import streamlit as st
 import logging
 import yaml
 from typing import Optional, Dict, Any
@@ -42,11 +41,24 @@ class ExtractionEvaluationService:
     @log_execution
     @handle_exceptions
     def _langfuse_client(self) -> Langfuse:
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+        host = os.getenv("LANGFUSE_HOST")
+
+        missing = [
+            key for key, val in {
+                "LANGFUSE_PUBLIC_KEY": public_key,
+                "LANGFUSE_SECRET_KEY": secret_key,
+                "LANGFUSE_HOST": host,
+            }.items() if not val
+        ]
+        if missing:
+            raise ValueError(f"Missing Langfuse env var(s): {', '.join(missing)}")
 
         langfuse_client = Langfuse(
-            public_key=os.getenv("LANGFUSE_PUBLIC_KEY") or st.secrets["LANGFUSE_PUBLIC_KEY"],
-            secret_key=os.getenv("LANGFUSE_SECRET_KEY") or st.secrets["LANGFUSE_SECRET_KEY"],
-            host=os.getenv("LANGFUSE_HOST") or st.secrets["LANGFUSE_HOST"],
+            public_key=public_key,
+            secret_key=secret_key,
+            host=host,
         )
     
         return langfuse_client
