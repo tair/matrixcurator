@@ -1,11 +1,20 @@
 from io import BytesIO
+import re
+import logging
 from .exceptions import log_execution, handle_exceptions
+
+logger = logging.getLogger(__name__)
 
 
 class NexService:
     def __init__(self, file: BytesIO):
         self.nexus_file = file.read().decode("utf-8")
         self.character_states = None
+
+    def get_nchar(self) -> int | None:
+        """Parse NCHAR from the DIMENSIONS line, e.g. 'DIMENSIONS NTAX=26 NCHAR=50;'"""
+        match = re.search(r"NCHAR\s*=\s*(\d+)", self.nexus_file, re.IGNORECASE)
+        return int(match.group(1)) if match else None
 
     @log_execution
     @handle_exceptions
@@ -80,5 +89,18 @@ class NexService:
         return new_nexus_content
     
     def update(self, character_states_list: list[dict]) -> str:
+        nchar = self.get_nchar()
+        extracted = len(character_states_list)
+        if nchar is not None:
+            if extracted == nchar:
+                logger.info(f"✅ Character count matches NCHAR: {extracted}/{nchar}")
+            else:
+                logger.warning(
+                    f"⚠ Character count mismatch: extracted {extracted}, expected {nchar} (NCHAR). "
+                    f"Missing {nchar - extracted} character(s)."
+                )
+        else:
+            logger.warning("⚠ Could not determine NCHAR from DIMENSIONS — skipping count validation")
+
         self.character_states = self._character_states(character_states_list=character_states_list)
         return self.nexus_update()
