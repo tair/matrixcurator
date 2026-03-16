@@ -6,7 +6,7 @@
 #
 # Available placeholders:
 #   extraction_prompt:  {total_characters}
-#   evaluation_prompt:  {extraction_response}
+#   evaluation_prompt:  {extraction_response}, {total_characters}
 # =============================================================================
 
 system_prompt: >
@@ -26,17 +26,31 @@ extraction_prompt: >
     appear in the paper.
 
   Important:
-  - Extract every character you can find, up to {total_characters}.
+  - The paper contains {total_characters} characters. Extract ALL of them.
+    Do not stop early.
+  - If the paper contains multiple separate character lists, combine
+    them into a single sequential list.
+  - Do NOT echo character numbers from the paper. List characters in
+    order — numbering is applied automatically by the system.
   - Use the exact terminology from the paper.
   - Each state should be a short label, not a full sentence.
   - Do not invent characters or states that are not in the paper.
+  - If the document does not contain a defined list of morphological
+    characters with multiple states each, return an empty list. Do not
+    fabricate characters from species descriptions or other prose.
 
 evaluation_prompt: >
   Evaluate the following batch extraction of morphological characters
-  from a phylogenetic research paper.
+  from a phylogenetic research paper. The paper should contain
+  {total_characters} characters.
 
   Extracted data:
   {extraction_response}
+
+  Verification checks:
+  - Verify the total count of extracted characters matches {total_characters}.
+  - Flag if any character has only one state (likely fabricated from prose).
+  - Flag if duplicate characters exist (same description appearing twice).
 
   Scoring Criteria:
   - 1-3: Most characters are missing, fabricated, or fundamentally wrong.

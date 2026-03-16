@@ -310,9 +310,10 @@ async def process_pdf(
         from config.main import settings
         import time
         
-        # Validate PDF file type
-        if not pdf_file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="File must be a PDF")
+        # Validate file type (PDF or DOCX)
+        file_ext = os.path.splitext(pdf_file.filename)[1].lower()
+        if file_ext not in ['.pdf', '.docx']:
+            raise HTTPException(status_code=400, detail="File must be a PDF or Word document (.docx)")
         
         # Validate models
         if extraction_model not in settings.MODELS:
@@ -332,25 +333,30 @@ async def process_pdf(
         
         start_time = time.time()
         
-        # Step 1: Read PDF file
-        pdf_bytes = await pdf_file.read()
-        pdf_stream = BytesIO(pdf_bytes)
-        pdf_stream.name = pdf_file.filename  # Add name attribute for compatibility
-        
-        # Step 2: Parse page range (handle empty range)
-        pages = parse_page_range_string(page_range)
-        
-        # If no page range specified, use all pages
-        if not pages:
-            from PyPDF2 import PdfReader
-            pdf_reader = PdfReader(pdf_stream)
-            total_pages = len(pdf_reader.pages)
-            pages = list(range(0, total_pages))  # 0-indexed for PyPDF2
-            pdf_stream.seek(0)  # Reset stream after reading
-        
-        # Step 3: Parse PDF with Gemini parser
+        # Step 1: Read file
+        file_bytes = await pdf_file.read()
+        file_stream = BytesIO(file_bytes)
+        file_stream.name = pdf_file.filename  # Add name attribute for compatibility
+
+        # Step 2-3: Parse file (branching for DOCX vs PDF)
         parser_service = ParserService("Gemini")
-        parsed_article = parser_service.parse(file=pdf_stream, pages=pages)
+
+        if file_ext == '.docx':
+            # DOCX: parse directly (page range not applicable)
+            parsed_article = parser_service.parse(file=file_stream, pages=[])
+        else:
+            # PDF: handle page range
+            pages = parse_page_range_string(page_range)
+
+            # If no page range specified, use all pages
+            if not pages:
+                from PyPDF2 import PdfReader
+                pdf_reader = PdfReader(file_stream)
+                total_pages = len(pdf_reader.pages)
+                pages = list(range(0, total_pages))  # 0-indexed for PyPDF2
+                file_stream.seek(0)  # Reset stream after reading
+
+            parsed_article = parser_service.parse(file=file_stream, pages=pages)
         
         # Step 4: Initialize extraction/evaluation service
         extraction_evaluation_service = ExtractionEvaluationService(
@@ -446,10 +452,10 @@ async def upload_csv(
         
         # Validate file type
         file_ext = os.path.splitext(csv_file.filename)[1].lower()
-        if file_ext not in ['.csv', '.xlsx']:
+        if file_ext not in ['.csv', '.xlsx', '.txt']:
             raise HTTPException(
-                status_code=400, 
-                detail="File must be a CSV (.csv) or Excel (.xlsx) file"
+                status_code=400,
+                detail="File must be a CSV (.csv), Excel (.xlsx), or text (.txt) file"
             )
         
         # Read file

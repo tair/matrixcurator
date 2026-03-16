@@ -35,7 +35,9 @@ RESULTS_FILE = BENCHMARKS_DIR / "results.json"
 # Benchmark PDFs and their expected character counts from KEY.nex NCHAR
 BENCHMARK_PDFS = [
     {"pdf": "Lepidocystoidea_Nohejlova_et_al_2019.pdf",   "key": "Lepidocystoidea_Nohejlova_et_al_2019_KEY.nex",   "nchar": 15},
+    {"pdf": "Oryctocephalinae_Sundberg_2006.pdf",          "key": "Oryctocephalinae_Sundberg_2006_KEY.nex",          "nchar": 20},
     {"pdf": "Dicranograptidae_Song_&_Zhang_2014.pdf",      "key": "Dicranograptidae_Song_&_Zhang_2014_KEY.nex",      "nchar": 25},
+    {"pdf": "Mesozoic_Echinoidea_Smith_2007.pdf",          "key": "Mesozoic_Echinoidea_Smith_2007_KEY.nex",          "nchar": 61},
     {"pdf": "Velatida_Gale_2018.pdf",                      "key": "Velatida_Gale_2018_KEY.nex",                      "nchar": 63},
     {"pdf": "Ursidae_Abella_et_al_2012.pdf",               "key": "Ursidae_Abella_et_al_2012_KEY.nex",               "nchar": 82},
     {"pdf": "Ichthyosauria_Thorne_et_al_2011.pdf",         "key": "Ichthyosauria_Thorne_et_al_2011_KEY.nex",         "nchar": 105},

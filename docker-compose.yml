@@ -6,6 +6,7 @@ services:
     volumes:
       - ./app.py:/app/app.py
       - ./src:/app/src
+      - ./tests:/app/tests
     command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
     environment:
       - PYTHONUNBUFFERED=1

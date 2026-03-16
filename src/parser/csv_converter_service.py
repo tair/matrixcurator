@@ -88,6 +88,34 @@ class CSVConverterService:
                         keep_default_na=False,
                         na_values=[""]
                     )
+            elif file_extension.lower() == '.txt':
+                # Text files may be simple tab-separated matrices or TNT-format
+                # files with mixed whitespace. Try tab first, fall back to
+                # whitespace, using the python engine to tolerate ragged rows.
+                if isinstance(file, bytes):
+                    file = BytesIO(file)
+                elif not isinstance(file, str):
+                    file.seek(0)
+
+                try:
+                    df = pd.read_csv(
+                        file, header=None, sep='\t',
+                        keep_default_na=False, na_values=[""],
+                        engine='python', on_bad_lines='warn'
+                    )
+                except Exception:
+                    df = pd.DataFrame()
+
+                if df.shape[1] <= 1:
+                    # Tab sep produced a single column — retry with any whitespace
+                    if hasattr(file, 'seek'):
+                        file.seek(0)
+                    df = pd.read_csv(
+                        file, header=None, sep=r'\s+',
+                        keep_default_na=False, na_values=[""],
+                        engine='python', on_bad_lines='warn'
+                    )
+                return df
             else:
                 raise ValueError(f"Unsupported file extension: {file_extension}")
         except Exception as e:

@@ -113,7 +113,8 @@ class ExtractionEvaluationService:
 
         # --- Step 2: Single batch evaluation call ---
         evaluation_prompt = self.evaluation_prompt.format(
-            extraction_response=characters
+            extraction_response=characters,
+            total_characters=self.total_characters
         )
 
         evaluation_score = None
