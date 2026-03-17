@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
@@ -7,7 +7,8 @@ WORKDIR /app
 # ---- system tools ----
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    build-essential gcc libffi-dev libssl-dev libreoffice ca-certificates && \
+    build-essential gcc libffi-dev libssl-dev \
+    libreoffice-writer-nogui ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # ---- Python deps ----
