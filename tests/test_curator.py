@@ -439,13 +439,10 @@ class TestE2EExtractionEvaluation:
 
     @requires_gemini
     def test_single_cycle(self, sample_context):
-        """Test the extract→evaluate cycle for a single character.
-        
-        NOTE: _cycle returns None when the evaluation score < 8 and
-        max_attempts is exhausted.  The source currently has max_attempts=0
-        (1 attempt, no retries), so a low score will make this None.
-        We test run_cycle instead, which aggregates results and tracks
-        failed indexes — giving us a definitive pass/fail signal.
+        """Test the full extract→evaluate cycle.
+
+        The sample context has 3 characters. We pass total_characters=3
+        and verify the pipeline runs end-to-end without crashing.
         """
         from llm.services import ExtractionEvaluationService
         from config.main import settings
@@ -456,18 +453,14 @@ class TestE2EExtractionEvaluation:
         svc = ExtractionEvaluationService(
             extraction_model=extraction_model,
             evaluation_model=evaluation_model,
-            total_characters=1,
+            total_characters=3,
             zero_indexed=False,
             context=sample_context,
         )
 
         results, failed = svc.run_cycle()
 
-        # With max_attempts=0 and a single character, either:
-        # - 1 success + 0 failures (score >= 8), or
-        # - 0 successes + 1 failure (score < 8)
-        # Both are valid — the pipeline ran without crashing.
-        assert len(results) + len(failed) == 1, "Expected exactly 1 character processed"
+        assert len(results) >= 1, "Expected at least 1 character extracted"
 
         if results:
             r = results[0]
