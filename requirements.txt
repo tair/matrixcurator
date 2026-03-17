@@ -6,11 +6,7 @@ google-cloud-aiplatform
 futures
 PyPDF2
 python-docx
-llama-index-core 
-llama-parse
-llama-index-readers-file 
 setuptools
-langfuse
 sentry-sdk
 pydantic_settings
 pyyaml

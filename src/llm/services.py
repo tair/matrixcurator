@@ -1,4 +1,3 @@
-from langfuse import Langfuse
 import os
 from io import BytesIO
 from pathlib import Path
@@ -26,42 +25,11 @@ class ExtractionEvaluationService:
         self.context_upload = context_upload if context_upload is not None else None
         self.total_characters = total_characters
         self.zero_indexed = zero_indexed if zero_indexed is not None else False
-        # Prompts loaded from src/config/prompts.yaml
-        # To use Langfuse instead, uncomment the lines below:
-        # self.langfuse_client = self._langfuse_client()
-        # self.system_prompt = self.langfuse_client.get_prompt("system_prompt").prompt
-        # self.extraction_prompt = self.langfuse_client.get_prompt("extraction_prompt").prompt
-        # self.evaluation_prompt = self.langfuse_client.get_prompt("evaluation_prompt").prompt
         self.system_prompt = _PROMPTS["system_prompt"]
         self.extraction_prompt = _PROMPTS["extraction_prompt"]
         self.evaluation_prompt = _PROMPTS["evaluation_prompt"]
 
         self.gemini_service = self._gemini_service()
-
-    @log_execution
-    @handle_exceptions
-    def _langfuse_client(self) -> Langfuse:
-        public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
-        secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-        host = os.getenv("LANGFUSE_HOST")
-
-        missing = [
-            key for key, val in {
-                "LANGFUSE_PUBLIC_KEY": public_key,
-                "LANGFUSE_SECRET_KEY": secret_key,
-                "LANGFUSE_HOST": host,
-            }.items() if not val
-        ]
-        if missing:
-            raise ValueError(f"Missing Langfuse env var(s): {', '.join(missing)}")
-
-        langfuse_client = Langfuse(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=host,
-        )
-    
-        return langfuse_client
 
     @log_execution
     @handle_exceptions   
