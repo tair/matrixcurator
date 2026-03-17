@@ -1,11 +1,10 @@
 import os
-from llama_parse import LlamaParse
-from llama_index.core import SimpleDirectoryReader
 from .exceptions import log_execution, handle_exceptions
 
 
 class LlamaParseService:
     def __init__(self):
+        from llama_parse import LlamaParse
         self.api_key = os.getenv("LLAMACLOUD_API_KEY")
         if not self.api_key:
             raise ValueError("LLAMACLOUD_API_KEY not configured")
@@ -29,6 +28,7 @@ class LlamaParseService:
         file_extractor = {file_extension: self.parser}
 
         # Parse the document
+        from llama_index.core import SimpleDirectoryReader
         documents = SimpleDirectoryReader(
             input_files=[file],
             file_extractor=file_extractor
